@@ -1,21 +1,30 @@
 // Package deej provides a machine-side client that pairs with an Arduino
-// chip to form a tactile, physical volume control system/
+// chip to form a tactile, physical volume control system.
 package deej
 
 import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/gorilla/websocket"
 	"github.com/omriharel/deej/pkg/deej/util"
 )
 
 const (
-
 	// when this is set to anything, deej won't use a tray icon
 	envNoTray = "DEEJ_NO_TRAY_ICON"
+)
+
+var (
+	socket        *websocket.Conn
+	mu            sync.Mutex
+	hasControlify bool
 )
 
 // Deej is the main entity managing access to all sub-components
@@ -98,6 +107,10 @@ func (d *Deej) Initialize() error {
 		return fmt.Errorf("init session map: %w", err)
 	}
 
+	if d.sessions.Contains("controlify") {
+		hasControlify = true
+	}
+
 	// decide whether to run with/without tray
 	if _, noTraySet := os.LookupEnv(envNoTray); noTraySet {
 
@@ -115,6 +128,105 @@ func (d *Deej) Initialize() error {
 	return nil
 }
 
+func (d *Deej) connectToControlify(logger *zap.SugaredLogger) {
+	if hasControlify {
+		go d.connectToWebSocketServer(logger)
+	}
+}
+
+func (d *Deej) connectToWebSocketServer(logger *zap.SugaredLogger) {
+	var retryCount int
+	var retryMaxCount = 5
+	var retryTimeout = 15 * time.Second
+
+	for {
+		if socket != nil {
+			break
+		}
+		mu.Lock()
+		var err error
+		socket, _, err = websocket.DefaultDialer.Dial("ws://localhost:8999", nil)
+		mu.Unlock()
+		if err != nil {
+			socket = nil
+			if retryCount < retryMaxCount || retryMaxCount == 0 {
+				retryCount++
+				logger.Warnw("Failed to connect to WebSocket server, retrying...", "error", err, "retries", retryCount)
+				time.Sleep(retryTimeout)
+				continue
+			} else {
+				logger.Errorw("Failed to connect to WebSocket server after multiple attempts, giving up.", "error", err)
+				return
+			}
+		}
+
+		// Send initial message with the identifier
+		initialMessage := map[string]interface{}{"clientID": "deej-client"}
+		err = socket.WriteJSON(initialMessage)
+		if err != nil {
+			logger.Errorw("Failed to send initial message", "error", err)
+			socket.Close()
+			socket = nil
+			continue
+		}
+
+		retryCount = 0
+		logger.Debug("WebSocket connection established")
+
+		// Handle heartbeats and messages
+		go d.handleWebSocketMessages(logger)
+
+		break
+	}
+}
+
+func (d *Deej) handleWebSocketMessages(logger *zap.SugaredLogger) {
+	for {
+		_, _, err := socket.ReadMessage()
+		if err != nil {
+			logger.Errorw("WebSocket read error", "error", err)
+			socket.Close()
+			socket = nil
+			go d.connectToWebSocketServer(logger)
+			break
+		}
+	}
+}
+
+func (d *Deej) SendVolume(sessionKey string, v float32) {
+	if socket != nil {
+		msg := map[string]interface{}{"setVolume": v}
+		if err := socket.WriteJSON(msg); err != nil {
+			d.logger.Errorw("Failed to send volume message", "error", err)
+		}
+	}
+}
+
+// Contains checks if the config's slider mapping contains a session with the given name
+func (sm *sessionMap) Contains(name string) bool {
+	sm.lock.Lock()
+	defer sm.lock.Unlock()
+	sm.logger.Debugw("Checking if config slider mapping contains session", "sessionName", name)
+	sm.logger.Debugw("Config slider mapping", "sliderMapping", sm.deej.config.SliderMapping.m)
+
+	// Check the slider mapping in the config
+	for _, mapped := range sm.deej.config.SliderMapping.m {
+		for _, appName := range mapped {
+			if strings.EqualFold(appName, name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (d *Deej) disconnectSocket(logger *zap.SugaredLogger) {
+	if socket != nil {
+		logger.Debug("Closing WebSocket connection")
+		socket.Close()
+	}
+}
+
 // SetVersion causes deej to add a version string to its tray menu if called before Initialize
 func (d *Deej) SetVersion(version string) {
 	d.version = version
@@ -127,6 +239,11 @@ func (d *Deej) Verbose() bool {
 
 func (d *Deej) setupInterruptHandler() {
 	interruptChannel := util.SetupCloseHandler()
+
+	if d.sessions.Contains("controlify") {
+		// Connect to the WebSocket server
+		go d.connectToWebSocketServer(d.logger)
+	}
 
 	go func() {
 		signal := <-interruptChannel

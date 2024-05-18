@@ -185,6 +185,7 @@ func (cc *CanonicalConfig) WatchConfigFileChanges() {
 
 				// and attempt reload if appropriate
 				cc.logger.Debugw("Config file modified, attempting reload", "event", event)
+				hasControlify = false
 
 				// wait a bit to let the editor actually flush the new file contents to disk
 				<-time.After(delayBetweenEventAndReload)

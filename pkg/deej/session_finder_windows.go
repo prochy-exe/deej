@@ -25,8 +25,9 @@ type wcaSessionFinder struct {
 	lastDefaultDeviceChange time.Time
 
 	// our master input and output sessions
-	masterOut *masterSession
-	masterIn  *masterSession
+	masterOut         *masterSession
+	masterIn          *masterSession
+	controlifySession *controlifySession
 }
 
 const (
@@ -136,6 +137,16 @@ func (sf *wcaSessionFinder) GetAllSessions() ([]Session, error) {
 
 		sessions = append(sessions, sf.masterIn)
 	}
+
+	// get the controlify session
+	sf.controlifySession, err = sf.getControlifySession(controlifySessionName, controlifySessionName)
+
+	if err != nil {
+		sf.logger.Warnw("Failed to get spotify audio session", "error", err)
+		return nil, fmt.Errorf("get master audio session: %w", err)
+	}
+
+	sessions = append(sessions, sf.controlifySession)
 
 	// enumerate all devices and make their "master" sessions bindable by friendly name;
 	// for output devices, this is also where we enumerate process sessions
@@ -538,4 +549,14 @@ func (sf *wcaSessionFinder) defaultDeviceChangedCallback(
 }
 func (sf *wcaSessionFinder) noopCallback() (hResult uintptr) {
 	return
+}
+
+func (sf *wcaSessionFinder) getControlifySession(key string, loggerKey string) (*controlifySession, error) {
+	// create the controlify session
+	spotify, err := newControlifySession(sf.sessionLogger, 5, key, loggerKey)
+	if err != nil {
+		sf.logger.Warnw("Failed to create master session instance", "error", err)
+		return nil, fmt.Errorf("create master session: %w", err)
+	}
+	return spotify, nil
 }

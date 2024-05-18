@@ -12,8 +12,9 @@ type paSessionFinder struct {
 	logger        *zap.SugaredLogger
 	sessionLogger *zap.SugaredLogger
 
-	client *proto.Client
-	conn   net.Conn
+	client            *proto.Client
+	conn              net.Conn
+	controlifySession *controlifySession
 }
 
 func newSessionFinder(logger *zap.SugaredLogger) (SessionFinder, error) {
@@ -64,6 +65,16 @@ func (sf *paSessionFinder) GetAllSessions() ([]Session, error) {
 	} else {
 		sf.logger.Warnw("Failed to get master audio source session", "error", err)
 	}
+
+	// get the controlify session
+	sf.controlifySession, err = sf.getControlifySession(controlifySessionName, controlifySessionName)
+
+	if err != nil {
+		sf.logger.Warnw("Failed to get spotify audio session", "error", err)
+		return nil, fmt.Errorf("get master audio session: %w", err)
+	}
+
+	sessions = append(sessions, sf.controlifySession)
 
 	// enumerate sink inputs and add sessions along the way
 	if err := sf.enumerateAndAddSessions(&sessions); err != nil {
@@ -147,4 +158,14 @@ func (sf *paSessionFinder) enumerateAndAddSessions(sessions *[]Session) error {
 	}
 
 	return nil
+}
+
+func (sf *paSessionFinder) getControlifySession(key string, loggerKey string) (*controlifySession, error) {
+	// create the controlify session
+	spotify, err := newControlifySession(sf.sessionLogger, 5, key, loggerKey)
+	if err != nil {
+		sf.logger.Warnw("Failed to create master session instance", "error", err)
+		return nil, fmt.Errorf("create master session: %w", err)
+	}
+	return spotify, nil
 }

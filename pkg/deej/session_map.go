@@ -26,9 +26,10 @@ type sessionMap struct {
 }
 
 const (
-	masterSessionName = "master" // master device volume
-	systemSessionName = "system" // system sounds volume
-	inputSessionName  = "mic"    // microphone input level
+	masterSessionName     = "master"     // master device volume
+	systemSessionName     = "system"     // system sounds volume
+	controlifySessionName = "controlify" // controlify volume
+	inputSessionName      = "mic"        // microphone input level
 
 	// some targets need to be transformed before their correct audio sessions can be accessed.
 	// this prefix identifies those targets to ensure they don't contradict with another similarly-named process
@@ -173,7 +174,10 @@ func (m *sessionMap) refreshSessions(force bool) {
 func (m *sessionMap) sessionMapped(session Session) bool {
 
 	// count master/system/mic as mapped
-	if funk.ContainsString([]string{masterSessionName, systemSessionName, inputSessionName}, session.Key()) {
+	if funk.ContainsString([]string{masterSessionName, systemSessionName, controlifySessionName, inputSessionName}, session.Key()) {
+		if session.Key() == controlifySessionName {
+			hasControlify = true
+		}
 		return true
 	}
 
