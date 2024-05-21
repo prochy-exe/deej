@@ -2,7 +2,9 @@ package deej
 
 import (
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -37,14 +39,15 @@ type CanonicalConfig struct {
 	internalConfig *viper.Viper
 }
 
-const (
-	userConfigFilepath     = "config.yaml"
-	internalConfigFilepath = "preferences.yaml"
+var (
+	userConfigFilepath = filepath.Join(filepath.Dir(func() string { p, _ := os.Executable(); return p }()), "config.yaml")
+	userConfigPath     = filepath.Dir(userConfigFilepath)
+	internalConfigPath = path.Join(userConfigPath, logDirectory)
+)
 
+const (
 	userConfigName     = "config"
 	internalConfigName = "preferences"
-
-	userConfigPath = "."
 
 	configType = "yaml"
 
@@ -57,9 +60,6 @@ const (
 	defaultCOMPort  = "COM4"
 	defaultBaudRate = 9600
 )
-
-// has to be defined as a non-constant because we're using path.Join
-var internalConfigPath = path.Join(".", logDirectory)
 
 var defaultSliderMapping = func() *sliderMap {
 	emptyMap := newSliderMap()
