@@ -40,9 +40,23 @@ type CanonicalConfig struct {
 }
 
 var (
-	userConfigFilepath = filepath.Join(filepath.Dir(func() string { p, _ := os.Executable(); return p }()), "config.yaml")
-	userConfigPath     = filepath.Dir(userConfigFilepath)
-	internalConfigPath = path.Join(userConfigPath, logDirectory)
+	deejDirectory = func() string { // Get the directory of the executable, even if it's a symlink
+		execPath, err := os.Executable()
+		if err != nil {
+			return filepath.Dir(func() string { p, _ := os.Executable(); return p }())
+		}
+
+		resolvedPath, err := filepath.EvalSymlinks(execPath)
+		if err != nil {
+			return filepath.Dir(func() string { p, _ := os.Executable(); return p }())
+		}
+
+		dir := filepath.Dir(resolvedPath)
+		return dir
+	}()
+	userConfigFilepath = filepath.Join(deejDirectory, "config.yaml")
+	userConfigPath     = deejDirectory
+	internalConfigPath = path.Join(deejDirectory, logDirectory)
 )
 
 const (
