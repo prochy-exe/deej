@@ -3,6 +3,7 @@ package deej
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/omriharel/deej/pkg/deej/util"
@@ -10,13 +11,15 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+var logDirectory = filepath.Join(deejDirectory, "logs")
+var outputPath string
+
 const (
 	buildTypeNone    = ""
 	buildTypeDev     = "dev"
 	buildTypeRelease = "release"
 
-	logDirectory = "logs"
-	logFilename  = "deej-latest-run.log"
+	logFilename = "deej-latest-run.log"
 )
 
 // NewLogger provides a logger instance for the whole program
@@ -31,7 +34,13 @@ func NewLogger(buildType string) (*zap.SugaredLogger, error) {
 
 		loggerConfig = zap.NewProductionConfig()
 
-		loggerConfig.OutputPaths = []string{filepath.Join(logDirectory, logFilename)}
+		if runtime.GOOS == "windows" { //zap doesn't support windows natively yay
+			outputPath = util.ConvertToURI(filepath.Join(logDirectory, logFilename))
+		} else {
+			outputPath = filepath.Join(logDirectory, logFilename)
+		}
+
+		loggerConfig.OutputPaths = []string{outputPath}
 		loggerConfig.Encoding = "console"
 
 		// development: debug and above, log to stderr only, colorful

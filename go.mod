@@ -18,3 +18,5 @@ require (
 	github.com/thoas/go-funk v0.7.0
 	go.uber.org/zap v1.15.0
 )
+
+replace go.uber.org/zap => github.com/prochy-exe/zap v0.0.0-20240525113953-d62fd2ebdb8d

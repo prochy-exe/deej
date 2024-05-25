@@ -3,10 +3,13 @@ package util
 import (
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"go.uber.org/zap"
@@ -19,6 +22,22 @@ func EnsureDirExists(path string) error {
 	}
 
 	return nil
+}
+
+// ConvertToURI converts a Windows file path to a file URI
+func ConvertToURI(filePath string) string {
+	// Convert Windows file path to a URI
+	uri := url.URL{
+		Scheme: "file",
+		Path:   filepath.ToSlash(filePath),
+	}
+
+	// Add double slash after the scheme
+	uriStr := uri.String()
+	if !strings.HasPrefix(uriStr, "file:///") {
+		uriStr = strings.Replace(uriStr, "file:/", "file://", 1)
+	}
+	return uriStr
 }
 
 // FileExists checks if a file exists and is not a directory before we
