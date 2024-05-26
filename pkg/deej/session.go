@@ -100,7 +100,7 @@ func (s *controlifySession) Key() string {
 
 func (s *controlifySession) Release() {
 	s.logger.Debug("Releasing Controlify session")
-	s.deejInstance.disconnectSocket(s.logger)
+	//s.deejInstance.disconnectSocket(s.logger) - let's not reconnect on every single session mapping
 }
 
 func (s *controlifySession) String() string {

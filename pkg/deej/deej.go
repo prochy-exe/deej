@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,9 +21,12 @@ const (
 )
 
 var (
-	socket        *websocket.Conn
-	mu            sync.Mutex
-	hasControlify bool
+	socket           *websocket.Conn
+	mu               sync.Mutex
+	hasControlify    bool = false
+	sessionRelease   bool
+	controlifyClosed bool
+	retryCount       int = 0
 )
 
 // Deej is the main entity managing access to all sub-components
@@ -107,10 +109,6 @@ func (d *Deej) Initialize() error {
 		return fmt.Errorf("init session map: %w", err)
 	}
 
-	if d.sessions.Contains("controlify") {
-		hasControlify = true
-	}
-
 	// decide whether to run with/without tray
 	if _, noTraySet := os.LookupEnv(envNoTray); noTraySet {
 
@@ -129,33 +127,47 @@ func (d *Deej) Initialize() error {
 }
 
 func (d *Deej) connectToControlify(logger *zap.SugaredLogger) {
-	if hasControlify {
+	if hasControlify && socket == nil {
 		go d.connectToWebSocketServer(logger)
+	} else if !hasControlify && socket != nil {
+		d.disconnectSocket(logger)
 	}
 }
 
 func (d *Deej) connectToWebSocketServer(logger *zap.SugaredLogger) {
-	var retryCount int
-	var retryMaxCount = 5
-	var retryTimeout = 15 * time.Second
+	const (
+		retryMaxCount = 5
+		retryTimeout  = 15 * time.Second
+	)
+
+	controlifyClosed = false
 
 	for {
+		mu.Lock()
 		if socket != nil {
+			mu.Unlock()
 			break
 		}
-		mu.Lock()
+		mu.Unlock()
+
 		var err error
+		mu.Lock()
 		socket, _, err = websocket.DefaultDialer.Dial("ws://localhost:8999", nil)
 		mu.Unlock()
+
 		if err != nil {
+			mu.Lock()
 			socket = nil
+			mu.Unlock()
+
 			if retryCount < retryMaxCount || retryMaxCount == 0 {
 				retryCount++
-				logger.Warnw("Failed to connect to WebSocket server, retrying...", "error", err, "retries", retryCount)
 				time.Sleep(retryTimeout)
 				continue
 			} else {
-				logger.Errorw("Failed to connect to WebSocket server after multiple attempts, giving up.", "error", err)
+				logger.Errorf("Failed to connect to WebSocket server after %v attempts, giving up.", retryMaxCount)
+				controlifyClosed = true
+				retryCount = 0
 				return
 			}
 		}
@@ -166,7 +178,9 @@ func (d *Deej) connectToWebSocketServer(logger *zap.SugaredLogger) {
 		if err != nil {
 			logger.Errorw("Failed to send initial message", "error", err)
 			socket.Close()
+			mu.Lock()
 			socket = nil
+			mu.Unlock()
 			continue
 		}
 
@@ -182,18 +196,23 @@ func (d *Deej) connectToWebSocketServer(logger *zap.SugaredLogger) {
 
 func (d *Deej) handleWebSocketMessages(logger *zap.SugaredLogger) {
 	for {
-		_, _, err := socket.ReadMessage()
-		if err != nil {
-			logger.Errorw("WebSocket read error", "error", err)
-			socket.Close()
-			socket = nil
-			go d.connectToWebSocketServer(logger)
-			break
+		if !sessionRelease && socket != nil {
+			_, _, err := socket.ReadMessage()
+			if err != nil {
+				d.disconnectSocket(logger)
+				if hasControlify {
+					logger.Error("Failed reading from Controlify, attempting to reconnect")
+					go d.connectToWebSocketServer(logger)
+				}
+				break
+			}
 		}
 	}
 }
 
 func (d *Deej) SendVolume(sessionKey string, v float32) {
+	mu.Lock()
+	defer mu.Unlock()
 	if socket != nil {
 		msg := map[string]interface{}{"setVolume": v}
 		if err := socket.WriteJSON(msg); err != nil {
@@ -202,28 +221,14 @@ func (d *Deej) SendVolume(sessionKey string, v float32) {
 	}
 }
 
-// Contains checks if the config's slider mapping contains a session with the given name
-func (sm *sessionMap) Contains(name string) bool {
-	sm.lock.Lock()
-	defer sm.lock.Unlock()
-	sm.logger.Debugw("Checking if config slider mapping contains session", "sessionName", name)
-	sm.logger.Debugw("Config slider mapping", "sliderMapping", sm.deej.config.SliderMapping.m)
-
-	// Check the slider mapping in the config
-	for _, mapped := range sm.deej.config.SliderMapping.m {
-		for _, appName := range mapped {
-			if strings.EqualFold(appName, name) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func (d *Deej) disconnectSocket(logger *zap.SugaredLogger) {
+	mu.Lock()
+	defer mu.Unlock()
 	if socket != nil {
 		logger.Debug("Closing WebSocket connection")
 		socket.Close()
+		socket = nil
+		controlifyClosed = true
 	}
 }
 
@@ -239,11 +244,6 @@ func (d *Deej) Verbose() bool {
 
 func (d *Deej) setupInterruptHandler() {
 	interruptChannel := util.SetupCloseHandler()
-
-	if d.sessions.Contains("controlify") {
-		// Connect to the WebSocket server
-		go d.connectToWebSocketServer(d.logger)
-	}
 
 	go func() {
 		signal := <-interruptChannel

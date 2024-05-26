@@ -1,6 +1,8 @@
 package deej
 
 import (
+	"time"
+
 	"fyne.io/systray"
 
 	"github.com/omriharel/deej/pkg/deej/icon"
@@ -9,6 +11,8 @@ import (
 
 func (d *Deej) initializeTray(onDone func()) {
 	logger := d.logger.Named("tray")
+
+	var socketStatus string
 
 	onReady := func() {
 		logger.Debug("Tray instance ready")
@@ -23,6 +27,9 @@ func (d *Deej) initializeTray(onDone func()) {
 		refreshSessions := systray.AddMenuItem("Re-scan audio sessions", "Manually refresh audio sessions if something's stuck")
 		refreshSessions.SetIcon(icon.RefreshSessions)
 
+		controlifyRetry := systray.AddMenuItem("Connecting to Controlify...", "Connecting to Controlify...")
+		controlifyRetry.Disable()
+
 		if d.version != "" {
 			systray.AddSeparator()
 			versionInfo := systray.AddMenuItem(d.version, "")
@@ -31,6 +38,41 @@ func (d *Deej) initializeTray(onDone func()) {
 
 		systray.AddSeparator()
 		quit := systray.AddMenuItem("Quit", "Stop deej and quit")
+
+		// Listen for controlify connection status
+		go func() {
+			for {
+				if hasControlify {
+					mu.Lock()
+					if controlifyClosed && socketStatus != "closed" {
+						socketStatus = "closed"
+						logger.Debug("Updating tray, Controlify connection closed")
+						controlifyRetry.Enable()
+						controlifyRetry.SetTitle("Retry connecting to Controlify")
+						controlifyRetry.SetTooltip("Retry connecting to Controlify")
+					} else if !controlifyClosed && socket != nil && socketStatus != "open" {
+						socketStatus = "open"
+						logger.Debug("Updating tray, Controlify connection active")
+						controlifyRetry.Disable()
+						controlifyRetry.SetTitle("Controlify connection active")
+						controlifyRetry.SetTooltip("Connected to Controlify")
+					} else if retryCount > 0 && socketStatus != "retrying" {
+						socketStatus = "retrying"
+						logger.Debug("Updating tray, Controlify connection retrying")
+						controlifyRetry.SetTitle("Connecting to Controlify...")
+						controlifyRetry.SetTooltip("Connecting to Controlify...")
+						controlifyRetry.Disable()
+					}
+					mu.Unlock()
+				} else {
+					logger.Debug("controlify support disabled, hiding controlify tray menu")
+					mu.Lock()
+					controlifyRetry.Hide()
+					mu.Unlock()
+				}
+				time.Sleep(3 * time.Second)
+			}
+		}()
 
 		// wait on things to happen
 		go func() {
@@ -63,6 +105,16 @@ func (d *Deej) initializeTray(onDone func()) {
 					// performance: the reason that forcing a refresh here is okay is that users can't spam the
 					// right-click -> select-this-option sequence at a rate that's meaningful to performance
 					d.sessions.refreshSessions(true)
+
+				case <-controlifyRetry.ClickedCh:
+					logger.Info("Retry Controlify menu item clicked, retrying connection")
+
+					go d.connectToControlify(logger)
+					socketStatus = "retrying"
+					logger.Debug("Updating tray, Controlify connection retrying")
+					controlifyRetry.SetTitle("Connecting to Controlify...")
+					controlifyRetry.SetTooltip("Connecting to Controlify...")
+					controlifyRetry.Disable()
 				}
 			}
 		}()

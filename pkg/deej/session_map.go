@@ -175,9 +175,6 @@ func (m *sessionMap) sessionMapped(session Session) bool {
 
 	// count master/system/mic as mapped
 	if funk.ContainsString([]string{masterSessionName, systemSessionName, controlifySessionName, inputSessionName}, session.Key()) {
-		if session.Key() == controlifySessionName {
-			hasControlify = true
-		}
 		return true
 	}
 
@@ -215,6 +212,7 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 	// first of all, ensure our session map isn't moldy
 	if m.lastSessionRefresh.Add(maxTimeBetweenSessionRefreshes).Before(time.Now()) {
 		m.logger.Debug("Stale session map detected on slider move, refreshing")
+		sessionRelease = true
 		m.refreshSessions(true)
 	}
 
@@ -364,6 +362,7 @@ func (m *sessionMap) clear() {
 	}
 
 	m.logger.Debug("Session map cleared")
+	sessionRelease = false
 }
 
 func (m *sessionMap) String() string {

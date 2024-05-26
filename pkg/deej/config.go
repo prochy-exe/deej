@@ -117,6 +117,28 @@ func NewConfig(logger *zap.SugaredLogger, notifier Notifier) (*CanonicalConfig, 
 	return cc, nil
 }
 
+func (cc *CanonicalConfig) checkForControlify(sm *sliderMap) bool {
+	sm.lock.Lock()
+	defer sm.lock.Unlock()
+
+	var controlifyFound bool
+
+	for _, slice := range sm.m {
+		for _, str := range slice {
+			if str == "controlify" {
+				controlifyFound = true
+				break
+			} else {
+				controlifyFound = false
+			}
+		}
+		if controlifyFound {
+			break
+		}
+	}
+	return controlifyFound
+}
+
 // Load reads deej's config files from disk and tries to parse them
 func (cc *CanonicalConfig) Load() error {
 	cc.logger.Debugw("Loading config", "path", userConfigFilepath)
@@ -155,6 +177,8 @@ func (cc *CanonicalConfig) Load() error {
 		cc.logger.Warnw("Failed to populate config fields", "error", err)
 		return fmt.Errorf("populate config fields: %w", err)
 	}
+
+	hasControlify = cc.checkForControlify(cc.SliderMapping)
 
 	cc.logger.Info("Loaded config successfully")
 	cc.logger.Infow("Config values",
@@ -199,7 +223,6 @@ func (cc *CanonicalConfig) WatchConfigFileChanges() {
 
 				// and attempt reload if appropriate
 				cc.logger.Debugw("Config file modified, attempting reload", "event", event)
-				hasControlify = false
 
 				// wait a bit to let the editor actually flush the new file contents to disk
 				<-time.After(delayBetweenEventAndReload)
